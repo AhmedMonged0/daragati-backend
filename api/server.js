@@ -4,12 +4,19 @@ import * as cheerio from 'cheerio';
 import cors from 'cors';
 
 const app = express();
-app.use(cors());
+
+// حل مشكلة الـ CORS نهائياً لبيئة الـ Serverless على Vercel
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
 app.use(express.json());
 
 // القاموس الشامل لجميع محافظات مصر الـ 27 لعام 2026
 const GOV_MAPPING = {
-  'القاهرة': 'Cairo',
+  'العاصمة': 'Cairo', // القاهرة
   'الجيزة': 'Giza',
   'الإسكندرية': 'Alexandria',
   'المنوفية': 'Monufia',
@@ -38,7 +45,7 @@ const GOV_MAPPING = {
   'جنوب سيناء': 'South-Sinai'
 };
 
-// 1. جلب المحافظات وحالاتها بنظام عزل النصوص لكل كارت على حدة
+// 1. جلب المحافظات وحالاتها
 app.get('/api/v1/governorates', async (req, res) => {
   try {
     const response = await axios.get('https://natiga.nezakr.net/', {
@@ -220,5 +227,4 @@ app.get('/api/v1/result', async (req, res) => {
   }
 });
 
-// التصدير الافتراضي لبيئة الـ Serverless على Vercel
 export default app;
