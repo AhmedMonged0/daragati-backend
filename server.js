@@ -60,7 +60,7 @@ app.get('/api/v1/governorates', async (req, res) => {
     $('a, div, p').each((index, element) => {
       const blockText = $(element).text().trim();
       
-      if (blockText.includes('محافظة') && blockText.length < 300) {
+      if (blockText.includes('محافظة') && blockText.length < 1000) {
         Object.keys(GOV_MAPPING).forEach(govName => {
           if (blockText.includes(govName)) {
             let status = "سيتم رفع النتيجة قريباً 🟡";
@@ -153,29 +153,81 @@ app.get('/api/v1/result', async (req, res) => {
     const grades = [];
     let calculatedTotal = 0;
 
-    $('table tr').each((index, element) => {
-      const label = $(element).find('td').eq(0).text().trim();
-      const value = $(element).find('td').eq(1).text().trim();
-      const maxText = $(element).find('td').eq(2).text().trim() || "0";
-
-      if (label.includes('التقدير')) statusText = value;
-      if (label.includes('المجموع الكلي')) {
-        const parsed = parseFloat(value);
-        if (!isNaN(parsed) && parsed > 50) scrapTotalScore = parsed;
+    // New Design Parsing
+    $('p').each((index, element) => {
+      const pText = $(element).text().trim();
+      if (pText === 'المجموع الكلي') {
+        const h4ScoreText = $(element).prev('h4').text().trim();
+        const parts = h4ScoreText.split('/');
+        if (parts.length > 0) {
+            const parsed = parseFloat(parts[0]);
+            if (!isNaN(parsed)) scrapTotalScore = parsed;
+        }
       }
+      if (pText === 'التقدير العام') {
+         statusText = $(element).prev('h4').text().trim();
+      }
+      if (pText === 'الحالة') {
+         const state = $(element).prev('h4').text().trim();
+         if(state && statusText !== "ناجح") statusText = state + " - " + statusText;
+         else if(state) statusText = state;
+      }
+    });
 
-      if (label && !label.includes('المدرسة') && !label.includes('الإدارة') && !label.includes('المجموع') && !label.includes('التقدير') && !label.includes('رقم') && !label.includes('الاسم')) {
-        const scoreNum = parseFloat(value);
-        if (value) {
-          grades.push({ subject: label, score: value, max: maxText !== "0" ? maxText : "مادة أساسية" });
-          if (!isNaN(scoreNum)) {
-            if (label.includes('اللغة العربية') || label.includes('اللغة الانجليزية') || label.includes('اللغة الإنجليزية') || label.includes('مجموع الرياضيات') || label.includes('الدراسات') || label.includes('العلوم')) {
-              calculatedTotal += scoreNum;
+    $('.subject-details-section').each((index, element) => {
+      const prevHeader = $(element).prev('.winners-header');
+      if (prevHeader.length) {
+        const subjectFullText = prevHeader.find('h4').text().trim();
+        if (subjectFullText.includes('تفاصيل وإحصاءات مادة')) {
+          const subject = subjectFullText.replace('تفاصيل وإحصاءات مادة', '').trim();
+          const scoreText = $(element).find('.studentnatigastats').first().text().trim();
+          
+          if (scoreText) {
+            const parts = scoreText.replace('درجة الطالب:', '').split('/');
+            if (parts.length === 2) {
+              const score = parts[0].trim();
+              const max = parts[1].trim();
+              grades.push({ subject, score, max });
+              
+              const scoreNum = parseFloat(score);
+              if (!isNaN(scoreNum)) {
+                 if (subject.includes('اللغة العربية') || subject.includes('اللغة الانجليزية') || subject.includes('اللغة الإنجليزية') || subject.includes('مجموع الرياضيات') || subject.includes('الدراسات') || subject.includes('العلوم')) {
+                   calculatedTotal += scoreNum;
+                 }
+              }
             }
           }
         }
       }
     });
+
+    // Fallback to Old Table Design if New Design failed to find grades
+    if (grades.length === 0) {
+      statusText = "ناجح";
+      $('table tr').each((index, element) => {
+        const label = $(element).find('td').eq(0).text().trim();
+        const value = $(element).find('td').eq(1).text().trim();
+        const maxText = $(element).find('td').eq(2).text().trim() || "0";
+
+        if (label.includes('التقدير')) statusText = value;
+        if (label.includes('المجموع الكلي')) {
+          const parsed = parseFloat(value);
+          if (!isNaN(parsed) && parsed > 50) scrapTotalScore = parsed;
+        }
+
+        if (label && !label.includes('المدرسة') && !label.includes('الإدارة') && !label.includes('المجموع') && !label.includes('التقدير') && !label.includes('رقم') && !label.includes('الاسم')) {
+          const scoreNum = parseFloat(value);
+          if (value) {
+            grades.push({ subject: label, score: value, max: maxText !== "0" ? maxText : "مادة أساسية" });
+            if (!isNaN(scoreNum)) {
+              if (label.includes('اللغة العربية') || label.includes('اللغة الانجليزية') || label.includes('اللغة الإنجليزية') || label.includes('مجموع الرياضيات') || label.includes('الدراسات') || label.includes('العلوم')) {
+                calculatedTotal += scoreNum;
+              }
+            }
+          }
+        }
+      });
+    }
 
     const finalScore = scrapTotalScore || calculatedTotal || 0;
 
