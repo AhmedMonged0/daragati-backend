@@ -243,7 +243,7 @@ app.get('/api/v1/result', async (req, res) => {
     });
 
   } catch (error) {
-    res.status(404).json({ success: false, message: `عذراً، النتيجة غير متاحة حالياً.` });
+    res.status(404).json({ success: false, message: `عذراً، النتيجة غير متاحة حالياً. تفاصيل الخطأ: ${error.message}` });
   }
 });
 
