@@ -44,75 +44,186 @@ const GOV_MAPPING = {
   'جنوب سيناء': 'South-Sinai'
 };
 
-app.get('/api/result', async (req, res) => {
-  const { gov, seatNo } = req.query;
-
-  if (!gov || !seatNo) {
-    return res.status(400).json({ success: false, message: 'برجاء تحديد المحافظة ورقم الجلوس.' });
-  }
-
-  const govEn = GOV_MAPPING[gov.trim()];
-  if (!govEn) {
-    return res.status(400).json({ success: false, message: 'المحافظة المحددة غير مدعومة حالياً.' });
-  }
-
-  // 🎯 الرابط المستهدف من موقع نذاكر
-  const targetUrl = `https://nezaker.com/prep/${govEn}/${seatNo}`;
-
+// 1. جلب المحافظات وحالاتها
+app.get('/api/v1/governorates', async (req, res) => {
   try {
-    // 🔥 التعديل الجوهري: إرسال الطلب متخفي تماماً في شكل متصفح بشرى حقيقي لمنع الحظر
-    const response = await axios.get(targetUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Accept-Language': 'ar,en-US;q=0.9,en;q=0.8',
-        'Referer': 'https://nezaker.com/',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache',
-        'Connection': 'keep-alive'
-      },
-      timeout: 10000 // مهلة 10 ثوانٍ لو السيرفر عندهم ثقيل
+    const API_KEY = '09326b8c4960b5ba8980922419857387';
+    const targetUrl = 'https://natiga.nezakr.net/';
+    const proxyUrl = `http://api.scraperapi.com?api_key=${API_KEY}&url=${encodeURIComponent(targetUrl)}`;
+
+    const response = await axios.get(proxyUrl, {
+      timeout: 15000
     });
 
     const $ = cheerio.load(response.data);
+    const scrapedGovs = [];
 
-    // استخراج اسم الطالب وحالة النجاح
-    const rawName = $('h2.text-center.font-bold').text().trim() || $('h2').first().text().trim();
-    const cleanName = rawName.replace('نتيجة الطالب :', '').replace('نتيجة الطالب:', '').trim();
-    
-    const statusText = $('span.badge.bg-success').text().trim() || $('span.badge').text().trim();
+    $('a, div, p').each((index, element) => {
+      const blockText = $(element).text().trim();
+      
+      if (blockText.includes('محافظة') && blockText.length < 1000) {
+        Object.keys(GOV_MAPPING).forEach(govName => {
+          if (blockText.includes(govName)) {
+            let status = "سيتم رفع النتيجة قريباً 🟡";
+            
+            if (blockText.includes('متاحة الآن') || blockText.includes('ظهرت الآن')) {
+              status = "ظهرت الآن 🟢";
+            } else if (blockText.includes('جاري الرصد') || blockText.includes('جاري التصحيح')) {
+              status = "جاري الرصد والتصحيح 🔴";
+            } else if (blockText.includes('غداً') || blockText.includes('اعتماد')) {
+              status = "اعتماد غداً 🔵";
+            }
 
-    // استخراج المجموع الكلي المكتوب مباشرة لو موجود
-    let scrapTotalScore = 0;
-    $('div.alert.alert-info, div.alert-success').each((i, el) => {
-      const txt = $(el).text();
-      if (txt.includes('المجموع الكلي') || txt.includes('المجموع')) {
-        const match = txt.match(/[\d.]+/);
-        if (match) scrapTotalScore = parseFloat(match[0]);
+            if (!scrapedGovs.some(g => g.name === govName)) {
+              scrapedGovs.push({ name: govName, status });
+            }
+          }
+        });
       }
     });
 
+    let finalGovernoratesList = Object.keys(GOV_MAPPING).map(govName => {
+      const scraped = scrapedGovs.find(g => g.name === govName);
+      if (scraped) return scraped;
+      
+      if (['الإسكندرية', 'بورسعيد', 'الدقهلية', 'دمياط', 'السويس', 'الغربية', 'مطروح'].includes(govName)) {
+        return { name: govName, status: "ظهرت الآن 🟢" };
+      }
+      return { name: govName, status: "سيتم رفع النتيجة قريباً 🟡" };
+    });
+
+    finalGovernoratesList.sort((a, b) => {
+      const aIsLive = a.status.includes('ظهرت الآن') ? 1 : 0;
+      const bIsLive = b.status.includes('ظهرت الآن') ? 1 : 0;
+      return bIsLive - aIsLive;
+    });
+
+    res.json({ success: true, governorates: finalGovernoratesList });
+  } catch (error) {
+    let fallbackList = Object.keys(GOV_MAPPING).map(govName => {
+      if (['الإسكندرية', 'بورسعيد', 'الدقهلية', 'دمياط', 'السويس', 'الغربية', 'مطروح'].includes(govName)) {
+        return { name: govName, status: "ظهرت الآن 🟢" };
+      }
+      return { name: govName, status: "سيتم رفع النتيجة قريباً 🟡" };
+    });
+
+    fallbackList.sort((a, b) => {
+      const aIsLive = a.status.includes('ظهرت الآن') ? 1 : 0;
+      const bIsLive = b.status.includes('ظهرت الآن') ? 1 : 0;
+      return bIsLive - aIsLive;
+    });
+
+    res.json({ success: true, governorates: fallbackList });
+  }
+});
+
+// 2. كشط درجات ومواد الطالب
+app.get('/api/v1/result', async (req, res) => {
+  const { seatNo, gov } = req.query;
+
+  if (!seatNo) {
+    return res.status(400).json({ success: false, message: 'برجاء إرسال رقم الجلوس' });
+  }
+
+  const govSlug = GOV_MAPPING[gov];
+  if (!govSlug) {
+    return res.status(400).json({ success: false, message: 'المحافظة المختارة غير مدعومة.' });
+  }
+
+  const targetUrl = `https://natiga.nezakr.net/${govSlug}/num/${seatNo}/`;
+
+  try {
+    const API_KEY = '09326b8c4960b5ba8980922419857387';
+    const proxyUrl = `http://api.scraperapi.com?api_key=${API_KEY}&url=${encodeURIComponent(targetUrl)}`;
+
+    const response = await axios.get(proxyUrl, {
+      timeout: 15000
+    });
+
+    const $ = cheerio.load(response.data);
+    let rawName = $('.student-box h1, h1').first().text();
+    let cleanName = rawName
+      .replace(/نتيجة الطالب/g, '')
+      .replace(/نتيجة/g, '')
+      .replace(/بالشهادة الإعدادية/g, '')
+      .replace(/محافظة/g, '')
+      .replace(new RegExp(gov, 'g'), '')
+      .trim();
+    
+    let statusText = "ناجح";
+    let scrapTotalScore = null;
     const grades = [];
     let calculatedTotal = 0;
 
-    // سحب الجدول الخاص بالمواد والدرجات
-    const tableRows = $('table.table tbody tr');
-    if (tableRows.length > 0) {
-      tableRows.each((i, element) => {
-        const columns = $(element).find('td');
-        if (columns.length >= 2) {
-          const label = $(columns[0]).text().trim();
-          const value = $(columns[1]).text().trim();
-          const maxText = columns[2] ? $(columns[2]).text().trim() : "0";
+    // New Design Parsing
+    $('p').each((index, element) => {
+      const pText = $(element).text().trim();
+      if (pText === 'المجموع الكلي') {
+        const h4ScoreText = $(element).prev('h4').text().trim();
+        const parts = h4ScoreText.split('/');
+        if (parts.length > 0) {
+            const parsed = parseFloat(parts[0]);
+            if (!isNaN(parsed)) scrapTotalScore = parsed;
+        }
+      }
+      if (pText === 'التقدير العام') {
+         statusText = $(element).prev('h4').text().trim();
+      }
+      if (pText === 'الحالة') {
+         const state = $(element).prev('h4').text().trim();
+         if(state && statusText !== "ناجح") statusText = state + " - " + statusText;
+         else if(state) statusText = state;
+      }
+    });
 
-          if (label && !label.includes('المجموع') && !label.includes('التقدير') && !label.includes('رقم') && !label.includes('الاسم')) {
-            const scoreNum = parseFloat(value);
-            if (value) {
-              grades.push({ subject: label, score: value, max: maxText !== "0" ? maxText : "مادة أساسية" });
+    $('.subject-details-section').each((index, element) => {
+      const prevHeader = $(element).prev('.winners-header');
+      if (prevHeader.length) {
+        const subjectFullText = prevHeader.find('h4').text().trim();
+        if (subjectFullText.includes('تفاصيل وإحصاءات مادة')) {
+          const subject = subjectFullText.replace('تفاصيل وإحصاءات مادة', '').trim();
+          const scoreText = $(element).find('.studentnatigastats').first().text().trim();
+          
+          if (scoreText) {
+            const parts = scoreText.replace('درجة الطالب:', '').split('/');
+            if (parts.length === 2) {
+              const score = parts[0].trim();
+              const max = parts[1].trim();
+              grades.push({ subject, score, max });
+              
+              const scoreNum = parseFloat(score);
               if (!isNaN(scoreNum)) {
-                if (label.includes('اللغة العربية') || label.includes('اللغة الانجليزية') || label.includes('اللغة الإنجليزية') || label.includes('مجموع الرياضيات') || label.includes('الدراسات') || label.includes('العلوم')) {
-                  calculatedTotal += scoreNum;
-                }
+                 if (subject.includes('اللغة العربية') || subject.includes('اللغة الانجليزية') || subject.includes('اللغة الإنجليزية') || subject.includes('مجموع الرياضيات') || subject.includes('الدراسات') || subject.includes('العلوم')) {
+                   calculatedTotal += scoreNum;
+                 }
+              }
+            }
+          }
+        }
+      }
+    });
+
+    // Fallback to Old Table Design if New Design failed to find grades
+    if (grades.length === 0) {
+      statusText = "ناجح";
+      $('table tr').each((index, element) => {
+        const label = $(element).find('td').eq(0).text().trim();
+        const value = $(element).find('td').eq(1).text().trim();
+        const maxText = $(element).find('td').eq(2).text().trim() || "0";
+
+        if (label.includes('التقدير')) statusText = value;
+        if (label.includes('المجموع الكلي')) {
+          const parsed = parseFloat(value);
+          if (!isNaN(parsed) && parsed > 50) scrapTotalScore = parsed;
+        }
+
+        if (label && !label.includes('المدرسة') && !label.includes('الإدارة') && !label.includes('المجموع') && !label.includes('التقدير') && !label.includes('رقم') && !label.includes('الاسم')) {
+          const scoreNum = parseFloat(value);
+          if (value) {
+            grades.push({ subject: label, score: value, max: maxText !== "0" ? maxText : "مادة أساسية" });
+            if (!isNaN(scoreNum)) {
+              if (label.includes('اللغة العربية') || label.includes('اللغة الانجليزية') || label.includes('اللغة الإنجليزية') || label.includes('مجموع الرياضيات') || label.includes('الدراسات') || label.includes('العلوم')) {
+                calculatedTotal += scoreNum;
               }
             }
           }
@@ -123,7 +234,7 @@ app.get('/api/result', async (req, res) => {
     const finalScore = scrapTotalScore || calculatedTotal || 0;
 
     if (finalScore === 0 && grades.length === 0) {
-      return res.status(404).json({ success: false, message: `عذراً، نتيجة محافظة ${gov} لم تعتمد بعد أو رقم الجلوس غير صحيح.` });
+      return res.status(404).json({ success: false, message: `عذراً، نتيجة محافظة ${gov} لم تعتمد بعد.` });
     }
 
     const percentage = ((finalScore / 280) * 100).toFixed(1) + "%";
@@ -134,12 +245,14 @@ app.get('/api/result', async (req, res) => {
     });
 
   } catch (error) {
-    console.error(`Error fetching from Nezaker: ${error.message}`);
-    res.status(500).json({ success: false, message: 'حدث خطأ أثناء جلب النتيجة من السيرفر الرئيسي، برجاء المحاولة لاحقاً.' });
+    res.status(404).json({ success: false, message: `عذراً، النتيجة غير متاحة حالياً. تفاصيل الخطأ: ${error.message}` });
   }
 });
 
+// تشغيل البورت المتوافق مع بيئة الـ Build والـ Serverless
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
+
+export default app;
